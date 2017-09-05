@@ -7,9 +7,16 @@ import sys
 import logging
 import os, re
 from datetime import datetime
-import platform
 import getpass
-from settings import DATABASE
+
+DATABASE = {
+            'host':"192.168.2.23",
+            'database':"leamazon",
+            'user':"ama_account",
+            'password':"T89ZY#UQWS",
+            'port':3306,
+            'charset':'utf8'
+}
 
 logging.basicConfig(level = logging.INFO,
                 format='%(asctime)s %(filename)s[line:%(lineno)d] %(levelname)s %(message)s',
@@ -19,11 +26,11 @@ logging.basicConfig(level = logging.INFO,
 
 _LOGGING = logging.getLogger('AmazonAutoLoginUserCheck.py')
 
-
 class UserLoginCheck():
 
-    def __init__(self, tryNum):
+    def __init__(self, tryNum=5):
         _LOGGING.info("UserLoginCheck init...")
+        self.tryNum = tryNum
         self.dbconn = pymysql.connect(**DATABASE)
         self.cur = self.dbconn.cursor()
 
@@ -51,60 +58,21 @@ class UserLoginCheck():
         self.log_table_name = "amz_auto_login_log"
 
         errorMsg = self.checkMacInfo(self.mac)
-        if errorMsg == "" :
-
+        if errorMsg == "":
             # log into db
             self.log_to_db(self.sys_username, self.mac, 'checkMac', 'success', '')
-
             self.fieldValues = g.multpasswordbox(self.msg, self.title, self.fieldNames)
-
             if self.fieldValues is None:
                 # log into db
                 self.log_to_db(self.sys_username, self.mac, 'check user info', 'failed_8', 'no username or password inputed')
                 sys.exit(0)
-
         else:
-
             # log into db
             self.log_to_db(self.sys_username, self.mac, 'checkMac', 'failed_5', errorMsg)
-
             self.fieldValues = g.msgbox(msg=errorMsg, title=self.title, ok_button="再见")
             close_attr(self, 'cur')
             close_attr(self, 'dbconn')
             sys.exit(0)
-
-        if tryNum:
-            self.tryNum = tryNum
-        else:
-            self.tryNum = 5
-
-            # get the log table of this PC, create an new table while not exists
-
-    def getlogtablename(self, mac):
-        _LOGGING.info("getlogtablename...")
-        # generate a log table name
-        table_name = str('amz_auto_login_log_' + str(mac).replace('-', '_')).lower()
-        sqlcmd = "SELECT  TABLE_NAME  FROM information_schema.TABLES " \
-                 "where TABLE_NAME = " + "'" + table_name + "' ;"
-        log_table_name = pd.read_sql(sqlcmd, self.dbconn)
-
-        if len(log_table_name) == 0:
-            create_table_sql = "CREATE TABLE IF NOT EXISTS `%s` (" \
-                               "`id`  int(11) NOT NULL AUTO_INCREMENT ," \
-                               "`user_name`  varchar(50) CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL ," \
-                               "`mac`  varchar(50) CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL ," \
-                               "`action`  varchar(18) CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL ," \
-                               "`status`  varchar(18) CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL ," \
-                               "`msg`  varchar(255) CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL ," \
-                               "`create_date`  datetime NULL DEFAULT NULL ," \
-                               "`update_date`  datetime NULL DEFAULT NULL ," \
-                               "PRIMARY KEY (`id`)" \
-                               ")" \
-                               "AUTO_INCREMENT=1 " \
-                               ";" % table_name
-            self.cur.execute(create_table_sql)
-
-        return table_name
 
     def __del__(self):
         close_attr(self, 'cur')
@@ -113,23 +81,12 @@ class UserLoginCheck():
     def login(self):
         _LOGGING.info("login ...")
         i = 0
-        flag = 1
-        while flag == 1:
-            if self.fieldValues == None:
-                break
-
-            errmsg = ""
-
+        while True:
             if i == self.tryNum-1:
                 errmsg = "您已经输错【%s】次用户名或密码" % self.tryNum + self.contact_info
-                flag = 0
                 self.fieldValues = g.msgbox(msg=errmsg, title=self.title, ok_button="再见")
-                # print('$' * 100)
-                # print(errmsg)
-
                 # log into db
                 self.log_to_db(self.sys_username, self.mac, 'checkUserinfo', 'failed_6', errmsg)
-
                 break
 
             username = self.fieldValues[0]
@@ -140,16 +97,12 @@ class UserLoginCheck():
 
             if self.login_result == True:
                 break
-
             if errmsg == "":
                 self.login_result = True
-
                 # log into db
                 self.log_to_db(self.sys_username, mac, 'checkUserinfo', 'success', errmsg)
-
                 self.fieldValues = g.msgbox(msg=errmsg, title=self.title, ok_button="再见")
                 break
-
             self.fieldValues = g.multpasswordbox(errmsg, self.title, self.fieldNames, self.fieldValues)
             i = i + 1
         _LOGGING.info("程序正在运行，请勿关闭此窗口！！！")
@@ -205,36 +158,25 @@ class UserLoginCheck():
                                         ok_button="继续")
 
             zone_dict = self.getzonedict(mac_localhost2)
-            print(zone_dict)
             reply = g.choicebox(msg="请选择你要登录的站点，默认为选择第一个站点！！！", title=self.title, choices=zone_dict.keys())
-
-            # print(reply_list)
-            print(reply)
-            print(zone_dict)
-            if reply is None:
-                self.login_id=zone_dict[0]
+            if reply:
+                self.login_id = zone_dict[reply]
             else:
-                self.login_id=zone_dict[reply]
-
+                self.login_id = zone_dict[0]
             return ""
+
         elif mac_localhost1 != mac_localhost2:
-            # print(mac_localhost1)
-            # print(mac_localhost2)
             return "您未授权在本机登录amazon后台" + self.contact_info
         elif status == 0:
             return "您的帐号登录权限已被收回" + self.contact_info
 
     def checkMacInfo(self, mac):
         _LOGGING.info("checkMacInfo ...")
-        # print("mac:"+mac)
         sqlcmd = "select max(status) as status from amazon_auto_login_users a " \
                    "where upper(mac_localhost) = " + "upper('" + mac + "') ;"
-        # print(sqlcmd)
         mac_result = pd.read_sql(sqlcmd, self.dbconn)
 
-        # print(mac_result["status"][0])
-        # if(len(mac_result)>0):
-        if mac_result["status"][0] is not None:
+        if mac_result["status"][0]:
             status = mac_result["status"][0]
         else:
             status = ""
@@ -248,11 +190,9 @@ class UserLoginCheck():
 
     def getzonedict(self, mac):
         _LOGGING.info("getzonedict ...")
-        # print(mac)
         sqlcmd = "select zone,login_id from amazon_auto_login_users a " \
                  "where upper(mac_localhost) = " + "upper('" + mac + "') and status = 1;"
         zone_result = pd.read_sql(sqlcmd, self.dbconn)
-        print(zone_result)
         return dict(zip(zone_result["zone"], zone_result["login_id"]))
 
 def close_attr(object_target, attr):
